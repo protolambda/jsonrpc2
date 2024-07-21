@@ -1,7 +1,6 @@
 package jsonrpc
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,7 +18,10 @@ var _ json.Unmarshaler = (*RawID)(nil)
 // if not null, a string, or an integer number, then invalid.
 // I.e. leading whitespace is not valid, true/false are not valid, floats are not valid, maps and arrays are not valid.
 func (id RawID) isValid() bool {
-	if len(id) == 0 || len(id) > maxIDLength {
+	if len(id) == 0 { // notifications do not have an ID
+		return true
+	}
+	if len(id) > maxIDLength {
 		return false
 	}
 	if id == "null" {
@@ -37,8 +39,12 @@ func (id RawID) isValid() bool {
 	return true
 }
 
+func (id RawID) IsNotification() bool {
+	return len(id) == 0
+}
+
 func (id RawID) MarshalJSON() ([]byte, error) {
-	if id.isValid() {
+	if !id.isValid() {
 		return nil, fmt.Errorf("invalid ID: %x", []byte(id))
 	}
 	return []byte(id), nil
@@ -59,9 +65,40 @@ func (id RawID) String() string {
 	return string(id)
 }
 
+// Params in JSON-RPC 2.0 can be either ordered or named.
+type Params json.RawMessage
+
+func (p Params) MarshalJSON() ([]byte, error) {
+	return p, nil
+}
+
+func (p *Params) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 {
+		return errors.New("invalid JSON, empty input")
+	}
+	if data[0] != '[' && data[0] != '{' {
+		return errors.New("JSON-RPC params must be list or map")
+	}
+	*p = data
+	return nil
+}
+
+func (p Params) Count() int {
+	var x []json.RawMessage
+	if err := json.Unmarshal(p, &x); err == nil {
+		return len(x)
+	}
+	var y map[string]json.RawMessage
+	if err := json.Unmarshal(p, &y); err == nil {
+		return len(y)
+	}
+	return 0
+}
+
 type Request struct {
-	Method string            `json:"method"`
-	Params []json.RawMessage `json:"params,omitempty"`
+	Method string `json:"method"`
+	// Can be a map or a list
+	Params Params `json:"params,omitempty"`
 }
 
 type ErrorObject struct {
@@ -79,13 +116,15 @@ type Response struct {
 // it validates the JSON-RPC version, without allocating it as Go string in every message.
 type V2 struct{}
 
-func (V2) MarshalJSON() ([]byte, error) {
-	return []byte("2.0"), nil
+var v2Bytes = []byte("2.0")
+
+func (V2) MarshalText() ([]byte, error) {
+	return v2Bytes, nil
 }
 
-func (*V2) UnmarshalJSON(data []byte) error {
-	if !bytes.Equal(data, []byte("2.0")) {
-		return fmt.Errorf("invalid JSON RPC version: %x", data)
+func (*V2) UnmarshalText(data []byte) error {
+	if len(data) != 3 || data[0] != '2' || data[1] != '.' || data[2] != '0' {
+		return fmt.Errorf("invalid JSON RPC version: %q", string(data))
 	}
 	return nil
 }
@@ -93,8 +132,61 @@ func (*V2) UnmarshalJSON(data []byte) error {
 type Message struct {
 	*Request
 	*Response
-	ID      RawID `json:"id"`
+	ID RawID // "notification" messages do not require an ID
+}
+
+type jsonMessage struct {
+	*Request
+	*Response
+	ID      RawID `json:"id,omitempty"` // "notification" messages do not require an ID
 	JSONRPC V2    `json:"jsonrpc"`
+}
+
+func (m *jsonMessage) Check() error {
+	if m.Response != nil {
+		if m.Request != nil {
+			return errors.New("message must be either a request or response, but not both")
+		}
+		if m.ID.IsNotification() {
+			return errors.New("responses cannot be notifications")
+		}
+	} else {
+		if m.Request == nil {
+			return errors.New("message must be either a request or response")
+		}
+	}
+	return nil
+}
+
+func (m *Message) MarshalJSON() ([]byte, error) {
+	out := jsonMessage{
+		Request:  m.Request,
+		Response: m.Response,
+		ID:       m.ID,
+		JSONRPC:  V2{},
+	}
+	data, err := json.Marshal(&out)
+	if err != nil {
+		return data, err
+	}
+	return data, out.Check()
+}
+
+func (m *Message) UnmarshalJSON(data []byte) error {
+	var dest jsonMessage
+	err := json.Unmarshal(data, &dest)
+	if err != nil {
+		return err
+	}
+	if err := dest.Check(); err != nil {
+		return err
+	}
+	*m = Message{
+		Request:  dest.Request,
+		Response: dest.Response,
+		ID:       dest.ID,
+	}
+	return nil
 }
 
 func (m *Message) RespondSuccess(data any) (*Message, error) {
@@ -112,8 +204,7 @@ func (m *Message) RespondSuccess(data any) (*Message, error) {
 			Result: &result,
 			Error:  nil,
 		},
-		ID:      m.ID,
-		JSONRPC: V2{},
+		ID: m.ID,
 	}, nil
 }
 
@@ -142,8 +233,7 @@ func (m *Message) Respond(data any) *Message {
 				Result: nil,
 				Error:  AnnotatedErrorObj(InternalError, err),
 			},
-			ID:      m.ID,
-			JSONRPC: V2{},
+			ID: m.ID,
 		}
 	}
 	return resp
@@ -156,7 +246,6 @@ func (m *Message) RespondErr(errObj *ErrorObject) *Message {
 			Result: nil,
 			Error:  errObj,
 		},
-		ID:      m.ID,
-		JSONRPC: V2{},
+		ID: m.ID,
 	}
 }
