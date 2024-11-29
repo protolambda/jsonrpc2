@@ -14,10 +14,10 @@ const maxIDLength = 32*2 + 2 + 2
 var _ json.Marshaler = RawID("")
 var _ json.Unmarshaler = (*RawID)(nil)
 
-// isValid checks if the JSON RPC message identifier is valid.
+// IsValid checks if the JSON RPC message identifier is valid.
 // if not null, a string, or an integer number, then invalid.
 // I.e. leading whitespace is not valid, true/false are not valid, floats are not valid, maps and arrays are not valid.
-func (id RawID) isValid() bool {
+func (id RawID) IsValid() bool {
 	if len(id) == 0 { // notifications do not have an ID
 		return true
 	}
@@ -44,7 +44,7 @@ func (id RawID) IsNotification() bool {
 }
 
 func (id RawID) MarshalJSON() ([]byte, error) {
-	if !id.isValid() {
+	if !id.IsValid() {
 		return nil, fmt.Errorf("invalid ID: %x", []byte(id))
 	}
 	return []byte(id), nil
@@ -55,7 +55,7 @@ func (id *RawID) UnmarshalJSON(data []byte) error {
 		return errors.New("cannot unmarshal into nil RawID")
 	}
 	*id = RawID(data)
-	if !id.isValid() {
+	if !id.IsValid() {
 		return fmt.Errorf("invalid ID: %x", data)
 	}
 	return nil
@@ -63,6 +63,10 @@ func (id *RawID) UnmarshalJSON(data []byte) error {
 
 func (id RawID) String() string {
 	return string(id)
+}
+
+func (id RawID) Equal(other RawID) bool {
+	return id == other
 }
 
 // Params in JSON-RPC 2.0 can be either ordered or named.
@@ -193,19 +197,38 @@ func (m *Message) RespondSuccess(data any) (*Message, error) {
 	if m.Response != nil {
 		return nil, fmt.Errorf("cannot respond to a response: %s", m.ID)
 	}
+	resp, err := RespondSuccess(data)
+	if err != nil {
+		return nil, err
+	}
+	return &Message{
+		Request:  nil,
+		Response: resp,
+		ID:       m.ID,
+	}, nil
+}
+
+func RespondSuccess(data any) (*Response, error) {
 	x, err := json.Marshal(data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode response: %w", err)
 	}
 	result := json.RawMessage(x)
-	return &Message{
-		Request: nil,
-		Response: &Response{
-			Result: &result,
-			Error:  nil,
-		},
-		ID: m.ID,
+	return &Response{
+		Result: &result,
+		Error:  nil,
 	}, nil
+}
+
+func Respond(data any) *Response {
+	resp, err := RespondSuccess(data)
+	if err != nil {
+		return &Response{
+			Result: nil,
+			Error:  AnnotatedErrorObj(InternalError, err),
+		}
+	}
+	return resp
 }
 
 func ConstErrorObj(c ErrorConst) *ErrorObject {
@@ -225,21 +248,20 @@ func AnnotatedErrorObj(c ErrorConst, err error) *ErrorObject {
 }
 
 func (m *Message) Respond(data any) *Message {
-	resp, err := m.RespondSuccess(data)
-	if err != nil {
-		return &Message{
-			Request: nil,
-			Response: &Response{
-				Result: nil,
-				Error:  AnnotatedErrorObj(InternalError, err),
-			},
-			ID: m.ID,
-		}
+	if m.Response != nil {
+		panic(fmt.Errorf("cannot respond to a response: %s", m.ID))
 	}
-	return resp
+	return &Message{
+		Request:  nil,
+		Response: Respond(data),
+		ID:       m.ID,
+	}
 }
 
 func (m *Message) RespondErr(errObj *ErrorObject) *Message {
+	if m.Response != nil {
+		panic(fmt.Errorf("cannot respond to a response: %s", m.ID))
+	}
 	return &Message{
 		Request: nil,
 		Response: &Response{
