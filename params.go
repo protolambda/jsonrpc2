@@ -8,6 +8,8 @@ import (
 	"reflect"
 )
 
+var emptyStruct = reflect.TypeFor[struct{}]()
+
 func ParamsDecoder[E any]() func(p Params) (E, error) {
 	typ := reflect.TypeFor[E]()
 	kind := typ.Kind()
@@ -19,6 +21,10 @@ func ParamsDecoder[E any]() func(p Params) (E, error) {
 	return func(p Params) (dest E, err error) {
 		p = bytes.TrimLeft(p, "\t\n\r ")
 		if len(p) == 0 {
+			// params may be omitted if we are not decoding into anything
+			if typ == emptyStruct {
+				return
+			}
 			err = errors.New("empty params data")
 			return
 		}
@@ -29,7 +35,9 @@ func ParamsDecoder[E any]() func(p Params) (E, error) {
 				err = fmt.Errorf("cannot decode named RPC params into list")
 				return
 			case '[':
-				err = json.Unmarshal(p, &dest)
+				dec := json.NewDecoder(bytes.NewReader(p))
+				dec.UseNumber()
+				err = dec.Decode(&dest)
 				return
 			default:
 				err = errors.New("invalid params")
@@ -48,14 +56,15 @@ func ParamsDecoder[E any]() func(p Params) (E, error) {
 				}
 				v := reflect.ValueOf(&dest).Elem()
 				if pointerTo { // allocate a value if the dest is just a pointer type
-					v.Set(reflect.New(typ))
+					v.Set(reflect.New(typ.Elem()))
 					v = v.Elem()
 				}
 				if expected := v.NumField(); expected != len(items) {
 					err = fmt.Errorf("expected %d params, got %d params", expected, len(items))
+					return
 				}
 				for i, itemData := range items {
-					if fErr := json.Unmarshal(itemData, v.Field(i).Interface()); fErr != nil {
+					if fErr := json.Unmarshal(itemData, v.Field(i).Addr().Interface()); fErr != nil {
 						err = errors.Join(err, fmt.Errorf("failed to decode field %d: %w", i, fErr))
 					}
 				}
