@@ -1,12 +1,10 @@
-// Package jsonrpc provides minimal types for JSON-RPC 2.0 messages,
+// Package jsonrpc2 provides minimal types for JSON-RPC 2.0 messages,
 // for servers and proxies that route and manage messages themselves.
-//
-// The package name is jsonrpc, while the module path ends in jsonrpc2:
-// the 2 is the JSON-RPC protocol version, not a module major version.
+// The 2 in the name is the JSON-RPC protocol version, not a module major version.
 //
 // A [Message] is either a request, or a response with exactly one of a result and an error.
 // Decoding validates the message structure, and so does encoding, so an invalid message is never written.
-package jsonrpc
+package jsonrpc2
 
 import (
 	"bytes"
