@@ -45,6 +45,24 @@ const (
 	Disconnected ErrorConst = 4900
 	// (EIP-1193) The Provider is not connected to the requested chain.
 	ChainDisconnected ErrorConst = 4901
+	// The wallet does not recognize the chain of wallet_switchEthereumChain (EIP-3326),
+	// which may be added with wallet_addEthereumChain (EIP-3085) first.
+	// A MetaMask convention, followed by other wallets: neither EIP defines the code.
+	UnrecognizedChainID ErrorConst = 4902
+	// (EIP-5792) The wallet does not support a capability that was not marked as optional.
+	UnsupportedNonOptionalCapability ErrorConst = 5700
+	// (EIP-5792) The wallet does not support the specified chain ID.
+	UnsupportedChainID ErrorConst = 5710
+	// (EIP-5792) There is already a bundle submitted with this ID.
+	DuplicateBundleID ErrorConst = 5720
+	// (EIP-5792) The bundle ID is unknown, or has not been submitted.
+	UnknownBundleID ErrorConst = 5730
+	// (EIP-5792) The call bundle is too large for the wallet to process.
+	BundleTooLarge ErrorConst = 5740
+	// (EIP-5792) The wallet can support atomicity after an upgrade, but the user rejected the upgrade.
+	AtomicReadyWalletRejectedUpgrade ErrorConst = 5750
+	// (EIP-5792) The wallet does not support atomic execution, but the request requires it.
+	AtomicityNotSupported ErrorConst = 5760
 )
 
 func (c ErrorConst) Code() int64 {
@@ -87,13 +105,29 @@ func (c ErrorConst) Message() string {
 		return "Disconnected"
 	case ChainDisconnected:
 		return "Chain Disconnected"
+	case UnrecognizedChainID:
+		return "Unrecognized chain ID"
+	case UnsupportedNonOptionalCapability:
+		return "Unsupported non-optional capability"
+	case UnsupportedChainID:
+		return "Unsupported chain id"
+	case DuplicateBundleID:
+		return "Duplicate ID"
+	case UnknownBundleID:
+		return "Unknown bundle id"
+	case BundleTooLarge:
+		return "Bundle too large"
+	case AtomicReadyWalletRejectedUpgrade:
+		return "Atomic-ready wallet rejected upgrade"
+	case AtomicityNotSupported:
+		return "Atomicity not supported"
 	default:
 		return fmt.Sprintf("Non-standard error-code %d", c.Code())
 	}
 }
 
-// IsServerError identifies server errors, per standard JSON-RPC 2.0 error code scheme.
-// Reserved for implementation-defined server-errors.
+// IsServerError identifies server errors, per standard JSON-RPC 2.0 error code scheme:
+// -32000 to -32099 inclusive, reserved for implementation-defined server-errors.
 func (c ErrorConst) IsServerError() bool {
-	return c < -32000 && c > -32099
+	return c <= -32000 && c >= -32099
 }
